@@ -1,6 +1,8 @@
 # FABS Track 2 — RL Agent for 3D-Physics Maze Navigation
 
 **Build with AI 2026 DeepTech Hackathon · GDG April · FABS**
+Repo: https://github.com/Shalbulov/ai-hackathon-t2-maze-rl
+
 Continuous-control PPO agent that navigates 9×9 mazes with heterogeneous
 physics (asphalt / grass / sand / ice friction, slope, temperature zones),
 trained only on 4 maps and evaluated on 3 held-out OOD maps + judges'
