@@ -38,12 +38,16 @@ def make_env(map_path: str, randomize: bool, rank: int, seed: int = 0):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--steps", type=int, default=500_000)
+    parser.add_argument("--steps", type=int, default=1_500_000)
     parser.add_argument("--n-envs", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--maps-dir", type=str, default="maps")
     parser.add_argument("--out-dir", type=str, default="agents")
     parser.add_argument("--tb", type=str, default="tb")
+    parser.add_argument("--dr", action="store_true",
+                        help="enable Domain Randomization (random start + physics jitter); "
+                             "default off — egocentric ray obs already gives map-to-map "
+                             "generalization, and DR diluted the canonical-start signal")
     parser.add_argument("--subproc", action="store_true",
                         help="use SubprocVecEnv instead of DummyVecEnv")
     args = parser.parse_args()
@@ -60,9 +64,9 @@ def main():
     print(f"[train] {len(train_maps)} train maps, {len(test_maps)} test maps")
     print(f"[train] device: {'cuda' if torch.cuda.is_available() else 'cpu'}")
 
-    # Round-robin train maps across parallel envs, randomize=True for DR
+    # Round-robin train maps across parallel envs
     env_fns = [
-        make_env(train_maps[i % len(train_maps)], randomize=True, rank=i, seed=args.seed)
+        make_env(train_maps[i % len(train_maps)], randomize=args.dr, rank=i, seed=args.seed)
         for i in range(args.n_envs)
     ]
     VecCls = SubprocVecEnv if args.subproc else DummyVecEnv

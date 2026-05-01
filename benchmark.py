@@ -165,6 +165,11 @@ def main():
     parser.add_argument("--maps-dir", type=str, default="maps")
     parser.add_argument("--viz-dir", type=str, default="viz")
     parser.add_argument("--monitor-glob", type=str, default="agents/*.monitor.csv")
+    parser.add_argument("--stochastic", action="store_true",
+                        help="sample actions instead of using deterministic mode "
+                             "(diagnostic — useful if deterministic gives 0% success "
+                             "to check whether the policy collapsed or just has a "
+                             "high-variance action distribution)")
     args = parser.parse_args()
 
     Path(args.viz_dir).mkdir(parents=True, exist_ok=True)
@@ -180,7 +185,8 @@ def main():
 
     for path in train_maps + test_maps:
         name = os.path.basename(path).replace(".npy", "")
-        res = evaluate_map(model, path, n_episodes=args.episodes)
+        res = evaluate_map(model, path, n_episodes=args.episodes,
+                           deterministic=not args.stochastic)
         split = "train" if name.startswith("train") else "test"
         rows.append((split, name, res["mean_steps"], res["std_steps"], res["success_rate"]))
         (train_means if split == "train" else test_means).append(res["mean_steps"])
