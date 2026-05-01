@@ -87,10 +87,10 @@ def main():
         gamma=0.99,
         gae_lambda=0.95,
         clip_range=0.2,
-        ent_coef=0.02,             # raised: previous run collapsed to "stand still"
+        ent_coef=0.005,            # lowered after BFS reward shaping made signal sharper
         vf_coef=0.5,
         max_grad_norm=0.5,
-        policy_kwargs=dict(net_arch=[128, 128]),
+        policy_kwargs=dict(net_arch=[256, 256]),
         tensorboard_log=args.tb,
         verbose=1,
         seed=args.seed,

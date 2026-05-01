@@ -26,6 +26,7 @@ Map .npy file (allow_pickle=True):
 from __future__ import annotations
 
 import os
+from collections import deque
 from typing import Any
 
 import gymnasium as gym
@@ -122,6 +123,28 @@ class Maze3DEnv(gym.Env):
         assert self.surface.shape == (h, w)
         assert self.slope.shape == (h, w, 2)
         assert self.temp.shape == (h, w)
+        # BFS distance from goal for potential-based reward shaping. This is
+        # critical: Euclidean distance can decrease even when the agent moves
+        # INTO a wall (because the wall is between agent and goal). With
+        # Euclidean shaping the policy learns to bash walls. BFS distance only
+        # decreases when the agent is actually making progress along a
+        # reachable path.
+        self.bfs_dist = self._bfs_from_goal()
+
+    def _bfs_from_goal(self) -> np.ndarray:
+        h, w = self.grid.shape
+        d = np.full((h, w), 1e6, dtype=np.float32)
+        d[self.goal] = 0.0
+        q: deque[tuple[int, int]] = deque([self.goal])
+        while q:
+            r, c = q.popleft()
+            for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < h and 0 <= nc < w and self.grid[nr, nc] == 0:
+                    if d[nr, nc] > d[r, c] + 1:
+                        d[nr, nc] = d[r, c] + 1
+                        q.append((nr, nc))
+        return d
 
     def _random_open_cell(self) -> tuple[int, int]:
         """Pick a random open cell that is at least 4 cells from the goal.
@@ -294,18 +317,20 @@ class Maze3DEnv(gym.Env):
         # 3. surface bonus -> learn to prefer high-grip terrain
         # 4. wall penalty -> discourage scraping walls
         # 5. terminal goal bonus -> strong signal for the actual objective
-        goal_xy = np.array(self.goal, dtype=np.float32) + 0.5
-        prev_dist = float(np.linalg.norm(prev_pos - goal_xy))
-        cur_dist = float(np.linalg.norm(self.pos - goal_xy))
-        progress = (prev_dist - cur_dist) / self._diag
         fric_bonus = 1.0 if self.surface[rr, cc] >= 1.0 else 0.0
 
-        # Stronger progress weight + step penalty proportional to distance.
-        # The previous balance (0.05 / 1.5) let "stand still" beat exploration
-        # because per-step penalty was barely larger than progress noise.
-        reward = -0.02 + 3.0 * progress + 0.02 * fric_bonus
+        # Potential-based reward shaping using BFS distance (in cells).
+        # bfs_progress > 0 ⇔ agent moved to a cell strictly closer to goal
+        # along a reachable path. Euclidean shaping (the previous formula)
+        # rewards moving INTO walls when the wall is between agent and goal,
+        # which collapses learning. See _bfs_from_goal in this file.
+        prev_r, prev_c = self._cell(prev_pos)
+        prev_bfs = float(self.bfs_dist[prev_r, prev_c])
+        cur_bfs = float(self.bfs_dist[rr, cc])
+        bfs_progress = prev_bfs - cur_bfs  # +1 for one cell of true progress
+        reward = -0.02 + 1.0 * bfs_progress + 0.02 * fric_bonus
         if wall_hit:
-            reward -= 0.5
+            reward -= 0.2
 
         terminated = False
         truncated = False
