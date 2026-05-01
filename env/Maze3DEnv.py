@@ -124,12 +124,21 @@ class Maze3DEnv(gym.Env):
         assert self.temp.shape == (h, w)
 
     def _random_open_cell(self) -> tuple[int, int]:
+        """Pick a random open cell that is at least 4 cells from the goal.
+
+        Why the distance floor: in a 9×9 maze, an unconstrained random start
+        often lands adjacent to the goal, giving 1-step episodes that don't
+        teach navigation. Forcing min-distance keeps every episode a real
+        navigation task.
+        """
         h, w = self.grid.shape
+        gr, gc = self.goal
         for _ in range(200):
             r = int(self._rng.integers(1, h - 1))
             c = int(self._rng.integers(1, w - 1))
             if self.grid[r, c] == 0 and (r, c) != self.goal:
-                return r, c
+                if abs(r - gr) + abs(c - gc) >= 4:
+                    return r, c
         return self.start
 
     def reset(
@@ -143,9 +152,15 @@ class Maze3DEnv(gym.Env):
             self._rng = np.random.default_rng(seed)
 
         if self.randomize:
-            r, c = self._random_open_cell()
-            self.pos = np.array([r, c], dtype=np.float32) + 0.5
-            self._physics_scale = float(self._rng.uniform(0.9, 1.1))
+            # Curriculum: 50% from canonical start (clean signal), 50% from
+            # randomized start (generalization). Pure randomization drowned the
+            # signal in noise and the policy collapsed to "stand still".
+            if self._rng.random() < 0.5:
+                self.pos = np.array(self.start, dtype=np.float32) + 0.5
+            else:
+                r, c = self._random_open_cell()
+                self.pos = np.array([r, c], dtype=np.float32) + 0.5
+            self._physics_scale = float(self._rng.uniform(0.95, 1.05))
         else:
             self.pos = np.array(self.start, dtype=np.float32) + 0.5
             self._physics_scale = 1.0
@@ -285,9 +300,12 @@ class Maze3DEnv(gym.Env):
         progress = (prev_dist - cur_dist) / self._diag
         fric_bonus = 1.0 if self.surface[rr, cc] >= 1.0 else 0.0
 
-        reward = -0.05 + 1.5 * progress + 0.05 * fric_bonus
+        # Stronger progress weight + step penalty proportional to distance.
+        # The previous balance (0.05 / 1.5) let "stand still" beat exploration
+        # because per-step penalty was barely larger than progress noise.
+        reward = -0.02 + 3.0 * progress + 0.02 * fric_bonus
         if wall_hit:
-            reward -= 0.3
+            reward -= 0.5
 
         terminated = False
         truncated = False
@@ -317,8 +335,8 @@ class Maze3DEnv(gym.Env):
         ax.axis("off")
         if self.render_mode == "rgb_array":
             fig.canvas.draw()
-            img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-            img = img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+            # tostring_rgb() removed in matplotlib 3.8+; buffer_rgba is the portable path
+            img = np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()
             plt.close(fig)
             return img
         plt.show()

@@ -127,8 +127,8 @@ def render_3d_trajectory(model, map_path: str, out_path: str, max_steps: int = 2
         ax.set_title("3D trajectory (z = timestep)")
         ax.legend()
         fig.canvas.draw()
-        img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-        img = img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+        # tostring_rgb() removed in matplotlib 3.8+; buffer_rgba is the portable path
+        img = np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()
         frames.append(img)
         plt.close(fig)
     imageio.mimsave(out_path, frames, fps=12)
