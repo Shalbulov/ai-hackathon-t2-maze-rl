@@ -171,6 +171,15 @@ shows the agent committing to a path then arriving in the goal cell.
 
 Agent's frame-by-frame motion on test1, our most challenging held-out map.
 
+### Learning curves
+
+![learning curve](viz/learning_curve.png)
+
+PPO over 2.5M training steps. **Episode reward** climbs from −7 (random
+exploration phase) to ~+60 (steadily reaching the goal +50 bonus). **Episode
+length** drops from 245 (timeout) to ~140 — the policy compresses paths as
+it converges. **Success rate** reaches 0.95+ across the 16-map shuffle.
+
 ### Visit-count heatmaps — fastest solved maps
 
 Log-scale visit count over 100 evaluation episodes. Bright cells =
