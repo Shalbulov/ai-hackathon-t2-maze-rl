@@ -28,15 +28,51 @@ from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from env import Maze3DEnv
 
 
-class MapShuffleEnv(gym.Env):
-    """Picks a random map from `map_paths` on every reset.
+class ProceduralMazeEnv(gym.Env):
+    """Generates a fresh maze on every reset using maze_gen.generate_map.
 
-    Why: with one map pinned per parallel env, PPO memorizes per-topology
-    policies but never learns a general navigation strategy. Shuffling
-    across all train maps each episode forces it to learn a single policy
-    that works on every layout — which is exactly what generalizes to test
-    and OOD maps.
+    Why: 8 fixed train maps left enough specific topologies un-mastered that
+    the policy still failed on holdouts. Procedural generation gives the
+    agent infinite map variety in the same physics distribution mix
+    (in-dist / OOD) — true generalization rather than coverage hoping.
     """
+
+    metadata = Maze3DEnv.metadata
+
+    def __init__(self, size: int = 9, ood_prob: float = 0.5, randomize: bool = True, seed: int = 0):
+        super().__init__()
+        from maze_gen import generate_map
+        self._gen = generate_map
+        self._size = size
+        self._ood_prob = ood_prob
+        self._randomize = randomize
+        self._rng = np.random.default_rng(seed)
+        # Build the underlying env with a throwaway initial maze
+        m0 = generate_map(size, seed=int(self._rng.integers(1 << 30)), ood=False)
+        self._env = Maze3DEnv(map_data=m0, randomize=randomize, seed=seed)
+        self.action_space = self._env.action_space
+        self.observation_space = self._env.observation_space
+
+    def reset(self, *, seed=None, options=None):
+        if seed is not None:
+            self._rng = np.random.default_rng(seed)
+        is_ood = bool(self._rng.random() < self._ood_prob)
+        m = self._gen(self._size, seed=int(self._rng.integers(1 << 30)), ood=is_ood)
+        self._env.reload(m)
+        return self._env.reset(seed=int(self._rng.integers(1 << 30)), options=options)
+
+    def step(self, action):
+        return self._env.step(action)
+
+    def render(self):
+        return self._env.render()
+
+    def close(self):
+        self._env.close()
+
+
+class MapShuffleEnv(gym.Env):
+    """Picks a random map from `map_paths` on every reset (fixed-pool baseline)."""
 
     metadata = Maze3DEnv.metadata
 
@@ -69,9 +105,14 @@ class MapShuffleEnv(gym.Env):
             e.close()
 
 
-def make_env(map_paths: list[str], randomize: bool, rank: int, seed: int = 0):
+def make_env(map_paths: list[str], randomize: bool, rank: int, seed: int = 0,
+             procedural: bool = False, size: int = 9):
     def _init():
-        env = MapShuffleEnv(map_paths=map_paths, randomize=randomize, seed=seed + rank)
+        if procedural:
+            env = ProceduralMazeEnv(size=size, ood_prob=0.5, randomize=randomize,
+                                    seed=seed + rank)
+        else:
+            env = MapShuffleEnv(map_paths=map_paths, randomize=randomize, seed=seed + rank)
         env = Monitor(env)
         return env
     return _init
@@ -89,6 +130,11 @@ def main():
                         help="disable Domain Randomization (random start cell). "
                              "On by default with BFS reward shaping, since DR helps "
                              "generalization without distorting the reward signal.")
+    parser.add_argument("--no-procedural", action="store_true",
+                        help="disable procedural maze generation during training "
+                             "(falls back to shuffling fixed maps/train*.npy). "
+                             "Procedural is on by default — gives infinite topology "
+                             "variety so the policy must generalize, not memorize.")
     parser.add_argument("--subproc", action="store_true",
                         help="use SubprocVecEnv instead of DummyVecEnv")
     args = parser.parse_args()
@@ -105,10 +151,12 @@ def main():
     print(f"[train] {len(train_maps)} train maps, {len(test_maps)} test maps")
     print(f"[train] device: {'cuda' if torch.cuda.is_available() else 'cpu'}")
 
-    # All envs draw from the full train pool on every reset (MapShuffleEnv)
     randomize = not args.no_dr
+    procedural = not args.no_procedural
+    print(f"[train] procedural={procedural} dr={randomize}")
     env_fns = [
-        make_env(train_maps, randomize=randomize, rank=i, seed=args.seed)
+        make_env(train_maps, randomize=randomize, rank=i, seed=args.seed,
+                 procedural=procedural)
         for i in range(args.n_envs)
     ]
     VecCls = SubprocVecEnv if args.subproc else DummyVecEnv

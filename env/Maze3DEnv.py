@@ -67,15 +67,18 @@ class Maze3DEnv(gym.Env):
 
     def __init__(
         self,
-        map_path: str,
+        map_path: str | None = None,
         max_steps: int = 250,
         render_mode: str | None = None,
         randomize: bool = False,
         seed: int | None = None,
+        map_data: dict | None = None,
     ):
         """
         Args:
             map_path: path to .npy file (see module docstring)
+            map_data: alternative to map_path — pass map dict directly (used
+                by procedural training, where mazes are regenerated each reset)
             max_steps: episode timeout (spec caps scoring at 200; 250 gives buffer)
             render_mode: 'human' | 'rgb_array' | None
             randomize: if True, randomize start cell + small physics jitter on
@@ -84,10 +87,16 @@ class Maze3DEnv(gym.Env):
             seed: RNG seed for randomize=True
         """
         super().__init__()
-        if not os.path.isfile(map_path):
-            raise FileNotFoundError(f"Map file not found: {map_path}")
-        self.map_path = map_path
-        self._load(map_path)
+        if map_data is not None:
+            self.map_path = "<inline>"
+            self._load_dict(map_data)
+        elif map_path is not None:
+            if not os.path.isfile(map_path):
+                raise FileNotFoundError(f"Map file not found: {map_path}")
+            self.map_path = map_path
+            self._load(map_path)
+        else:
+            raise ValueError("Maze3DEnv needs either map_path or map_data")
 
         self.max_steps = max_steps
         self.render_mode = render_mode
@@ -112,7 +121,9 @@ class Maze3DEnv(gym.Env):
         self._physics_scale = 1.0  # mutated by randomize
 
     def _load(self, path: str) -> None:
-        m = _load_map(path)
+        self._load_dict(_load_map(path))
+
+    def _load_dict(self, m: dict) -> None:
         self.grid = np.asarray(m["grid"], dtype=np.int8)
         self.surface = np.asarray(m["surface"], dtype=np.float32)
         self.slope = np.asarray(m["slope"], dtype=np.float32)
@@ -130,6 +141,15 @@ class Maze3DEnv(gym.Env):
         # decreases when the agent is actually making progress along a
         # reachable path.
         self.bfs_dist = self._bfs_from_goal()
+        # visits buffer must match current grid shape
+        if not hasattr(self, "visits") or self.visits.shape != self.grid.shape:
+            self.visits = np.zeros_like(self.grid, dtype=np.int32)
+
+    def reload(self, map_data: dict) -> None:
+        """Hot-swap to a fresh map (used by procedural training)."""
+        self._load_dict(map_data)
+        diag = float(np.hypot(*self.grid.shape))
+        self._diag = diag if diag > 0 else 1.0
 
     def _bfs_from_goal(self) -> np.ndarray:
         h, w = self.grid.shape
