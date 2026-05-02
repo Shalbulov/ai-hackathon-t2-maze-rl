@@ -35,7 +35,10 @@ from gymnasium import spaces
 
 
 N_RAYS = 8
-N_OBS = 23
+N_OBS_BASE = 23   # spec-mandated features (8 dist + 8 surf + 2 goal + 3 phys + 2 vel)
+N_OBS_VISIT = 4   # extension: visit counts of N/E/S/W neighbors (loop avoidance)
+N_OBS = N_OBS_BASE + N_OBS_VISIT  # 27
+VISIT_SATURATION = 5.0  # visits >= 5 saturate to 1.0 in obs
 SURFACE_VALUES = np.array([0.4, 0.7, 1.0, 1.2], dtype=np.float32)  # sand, grass, asphalt, ice
 
 # Physics constants — tuned so 9×9 mazes (path ~16-19 cells) hit the rubric's
@@ -273,7 +276,21 @@ class Maze3DEnv(gym.Env):
         h, w = self.grid.shape
         gdx = (self.goal[0] + 0.5 - self.pos[0]) / h
         gdy = (self.goal[1] + 0.5 - self.pos[1]) / w
-        # Layout: 8 dist + 8 surface + 2 goal_dxy + 3 (fric, slope_avg, temp) + 2 vel = 23
+
+        # Visit counts of 4 cardinal neighbors, normalized to [0, 1]. Walls
+        # report 1.0 (saturated) so the policy treats them like "stale" cells
+        # — there's no reward signal pulling toward unreachable directions.
+        def _vc(rr: int, cc: int) -> float:
+            if 0 <= rr < h and 0 <= cc < w and self.grid[rr, cc] == 0:
+                return min(self.visits[rr, cc] / VISIT_SATURATION, 1.0)
+            return 1.0
+        visit_neighbors = np.array(
+            [_vc(r - 1, c), _vc(r + 1, c), _vc(r, c - 1), _vc(r, c + 1)],
+            dtype=np.float32,
+        )
+
+        # Layout: 8 dist + 8 surface + 2 goal_dxy + 3 (fric, slope_avg, temp)
+        #       + 2 vel + 4 neighbor_visits = 27
         obs = np.concatenate(
             [
                 dists,
@@ -287,6 +304,7 @@ class Maze3DEnv(gym.Env):
                     dtype=np.float32,
                 ),
                 np.clip(self.vel / MAX_VEL, -1.0, 1.0),
+                visit_neighbors,
             ]
         ).astype(np.float32)
         assert obs.shape == (N_OBS,), f"obs shape {obs.shape}"
