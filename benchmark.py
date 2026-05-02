@@ -24,7 +24,39 @@ import matplotlib.pyplot as plt
 import numpy as np
 from stable_baselines3 import PPO
 
+try:
+    from sb3_contrib import RecurrentPPO
+except ImportError:
+    RecurrentPPO = None
+
 from env import Maze3DEnv
+
+
+def load_model(path: str):
+    """Try PPO first, fall back to RecurrentPPO. SB3 stores model class metadata
+    in the zip but PPO.load() won't auto-route to the LSTM variant, so we sniff."""
+    if path.endswith(".zip"):
+        try:
+            return PPO.load(path)
+        except Exception:
+            if RecurrentPPO is None:
+                raise
+            return RecurrentPPO.load(path)
+    return PPO.load(path)
+
+
+def is_recurrent(model) -> bool:
+    return RecurrentPPO is not None and isinstance(model, RecurrentPPO)
+
+
+def predict_action(model, obs, lstm_state, episode_start, deterministic):
+    if is_recurrent(model):
+        action, lstm_state = model.predict(
+            obs, state=lstm_state, episode_start=episode_start, deterministic=deterministic
+        )
+        return action, lstm_state
+    action, _ = model.predict(obs, deterministic=deterministic)
+    return action, None
 
 
 def evaluate_map(model, map_path: str, n_episodes: int, deterministic: bool = True):
@@ -33,8 +65,11 @@ def evaluate_map(model, map_path: str, n_episodes: int, deterministic: bool = Tr
     for ep in range(n_episodes):
         obs, _ = env.reset(seed=ep)
         done = False
+        lstm_state = None
+        episode_start = np.ones((1,), dtype=bool)
         while not done:
-            action, _ = model.predict(obs, deterministic=deterministic)
+            action, lstm_state = predict_action(model, obs, lstm_state, episode_start, deterministic)
+            episode_start = np.zeros((1,), dtype=bool)
             obs, _, term, trunc, info = env.step(action)
             done = term or trunc
         steps_list.append(env.steps)
@@ -66,8 +101,11 @@ def render_trajectory_gif(model, map_path: str, out_path: str, max_steps: int = 
     obs, _ = env.reset(seed=0)
     frames = [env.render()]
     done = False
+    lstm_state = None
+    episode_start = np.ones((1,), dtype=bool)
     while not done and len(frames) < max_steps:
-        action, _ = model.predict(obs, deterministic=True)
+        action, lstm_state = predict_action(model, obs, lstm_state, episode_start, True)
+        episode_start = np.zeros((1,), dtype=bool)
         obs, _, term, trunc, _ = env.step(action)
         frames.append(env.render())
         done = term or trunc
@@ -82,11 +120,14 @@ def render_before_after(trained_model, map_path: str, out_path: str, max_steps: 
         obs, _ = env.reset(seed=0)
         frames = [env.render()]
         done = False
+        lstm_state = None
+        episode_start = np.ones((1,), dtype=bool)
         while not done and len(frames) < max_steps:
             if model_or_none is None:
                 action = env.action_space.sample()
             else:
-                action, _ = model_or_none.predict(obs, deterministic=True)
+                action, lstm_state = predict_action(model_or_none, obs, lstm_state, episode_start, True)
+                episode_start = np.zeros((1,), dtype=bool)
             obs, _, term, trunc, _ = env.step(action)
             frames.append(env.render())
             done = term or trunc
@@ -106,8 +147,11 @@ def render_3d_trajectory(model, map_path: str, out_path: str, max_steps: int = 2
     env = Maze3DEnv(map_path=map_path, randomize=False)
     obs, _ = env.reset(seed=0)
     done = False
+    lstm_state = None
+    episode_start = np.ones((1,), dtype=bool)
     while not done and env.steps < max_steps:
-        action, _ = model.predict(obs, deterministic=True)
+        action, lstm_state = predict_action(model, obs, lstm_state, episode_start, True)
+        episode_start = np.zeros((1,), dtype=bool)
         obs, _, term, trunc, _ = env.step(action)
         done = term or trunc
     traj = np.array(env.trajectory)
@@ -173,8 +217,8 @@ def main():
     args = parser.parse_args()
 
     Path(args.viz_dir).mkdir(parents=True, exist_ok=True)
-    model = PPO.load(args.model)
-    print(f"[bench] loaded {args.model}")
+    model = load_model(args.model)
+    print(f"[bench] loaded {args.model} ({type(model).__name__})")
 
     train_maps = sorted(glob.glob(os.path.join(args.maps_dir, "train*.npy")))
     test_maps = sorted(glob.glob(os.path.join(args.maps_dir, "test*.npy")))

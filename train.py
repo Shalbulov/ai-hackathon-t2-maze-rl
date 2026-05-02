@@ -25,6 +25,11 @@ from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
+try:
+    from sb3_contrib import RecurrentPPO
+except ImportError:
+    RecurrentPPO = None
+
 from env import Maze3DEnv
 
 
@@ -132,10 +137,12 @@ def main():
                              "generalization without distorting the reward signal.")
     parser.add_argument("--procedural", action="store_true",
                         help="generate fresh mazes during training instead of "
-                             "shuffling fixed maps/train*.npy. Off by default — "
-                             "tested on 1.5M steps and didn't converge fast "
-                             "enough; mixed-pool of 16 fixed train maps with "
-                             "shuffle reaches 0.85+ success in 1.5M steps.")
+                             "shuffling fixed maps/train*.npy.")
+    parser.add_argument("--lstm", action="store_true",
+                        help="use RecurrentPPO with LSTM policy. The hidden state "
+                             "lets the agent remember where it has been and avoid "
+                             "loops in dead-ends — essential for solving every "
+                             "topology in a fixed pool, not just the lucky ones.")
     parser.add_argument("--subproc", action="store_true",
                         help="use SubprocVecEnv instead of DummyVecEnv")
     args = parser.parse_args()
@@ -154,7 +161,9 @@ def main():
 
     randomize = not args.no_dr
     procedural = args.procedural
-    print(f"[train] procedural={procedural} dr={randomize} train_maps={len(train_maps)}")
+    print(f"[train] procedural={procedural} dr={randomize} lstm={args.lstm} train_maps={len(train_maps)}")
+    if args.lstm and RecurrentPPO is None:
+        raise RuntimeError("--lstm requires sb3-contrib. Run `pip install sb3-contrib==2.3.0`.")
     env_fns = [
         make_env(train_maps, randomize=randomize, rank=i, seed=args.seed,
                  procedural=procedural)
@@ -170,27 +179,56 @@ def main():
         return env
     eval_env = DummyVecEnv([_eval_init])
 
-    # PPO hyperparams chosen for short-horizon continuous control on small obs.
-    # n_steps=1024 × 4 envs = 4096 transitions per rollout — good for PPO stability.
-    model = PPO(
-        policy="MlpPolicy",
-        env=vec_env,
-        learning_rate=3e-4,
-        n_steps=1024,
-        batch_size=256,
-        n_epochs=10,
-        gamma=0.99,
-        gae_lambda=0.95,
-        clip_range=0.2,
-        ent_coef=0.005,            # lowered after BFS reward shaping made signal sharper
-        vf_coef=0.5,
-        max_grad_norm=0.5,
-        policy_kwargs=dict(net_arch=[256, 256]),
-        tensorboard_log=args.tb,
-        verbose=1,
-        seed=args.seed,
-        device="auto",
-    )
+    if args.lstm:
+        # RecurrentPPO with LSTM. The hidden state acts as implicit episodic
+        # memory: the policy can "remember" cells it has tried, dead-ends it
+        # bounced off, etc. — exactly the missing piece for solving every
+        # topology in the train pool, not just the easy ones. Hyperparams are
+        # smaller n_steps (LSTM unroll cost) and higher ent_coef (the wider
+        # state space needs more exploration).
+        model = RecurrentPPO(
+            policy="MlpLstmPolicy",
+            env=vec_env,
+            learning_rate=3e-4,
+            n_steps=256,
+            batch_size=128,
+            n_epochs=10,
+            gamma=0.99,
+            gae_lambda=0.95,
+            clip_range=0.2,
+            ent_coef=0.01,
+            vf_coef=0.5,
+            max_grad_norm=0.5,
+            policy_kwargs=dict(
+                net_arch=[256, 256],
+                lstm_hidden_size=128,
+            ),
+            tensorboard_log=args.tb,
+            verbose=1,
+            seed=args.seed,
+            device="auto",
+        )
+    else:
+        # Memoryless PPO baseline.
+        model = PPO(
+            policy="MlpPolicy",
+            env=vec_env,
+            learning_rate=3e-4,
+            n_steps=1024,
+            batch_size=256,
+            n_epochs=10,
+            gamma=0.99,
+            gae_lambda=0.95,
+            clip_range=0.2,
+            ent_coef=0.005,
+            vf_coef=0.5,
+            max_grad_norm=0.5,
+            policy_kwargs=dict(net_arch=[256, 256]),
+            tensorboard_log=args.tb,
+            verbose=1,
+            seed=args.seed,
+            device="auto",
+        )
 
     callbacks = [
         CheckpointCallback(
