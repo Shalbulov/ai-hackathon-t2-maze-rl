@@ -1,14 +1,12 @@
 """
-train.py — PPO training with domain randomization for FABS Track 2.
+train.py — PPO training for FABS Track 2.
 
-Trains ONLY on maps/train*.npy (test maps are held out for benchmarking).
-Domain randomization (random start cell + small physics jitter on each
-reset) is enabled at train time to improve generalization to held-out
-and judges' OOD maps.
+Trains on maps/train*.npy only. Test maps are held out for benchmarking.
+Each parallel env shuffles the full train pool every reset, with random
+start cells (domain randomization) for generalization.
 
 Usage:
-    python train.py                        # default: 500k steps on T4 ~ 1.5h
-    python train.py --steps 1000000 --n-envs 8
+    python train.py --steps 2500000 --n-envs 8 --seed 42
 """
 from __future__ import annotations
 
@@ -34,13 +32,7 @@ from env import Maze3DEnv
 
 
 class ProceduralMazeEnv(gym.Env):
-    """Generates a fresh maze on every reset using maze_gen.generate_map.
-
-    Why: 8 fixed train maps left enough specific topologies un-mastered that
-    the policy still failed on holdouts. Procedural generation gives the
-    agent infinite map variety in the same physics distribution mix
-    (in-dist / OOD) — true generalization rather than coverage hoping.
-    """
+    """Generates a fresh maze on every reset (optional --procedural mode)."""
 
     metadata = Maze3DEnv.metadata
 
@@ -52,7 +44,6 @@ class ProceduralMazeEnv(gym.Env):
         self._ood_prob = ood_prob
         self._randomize = randomize
         self._rng = np.random.default_rng(seed)
-        # Build the underlying env with a throwaway initial maze
         m0 = generate_map(size, seed=int(self._rng.integers(1 << 30)), ood=False)
         self._env = Maze3DEnv(map_data=m0, randomize=randomize, seed=seed)
         self.action_space = self._env.action_space

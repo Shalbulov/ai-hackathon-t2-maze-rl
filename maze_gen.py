@@ -1,13 +1,11 @@
 """
 maze_gen.py — Procedural maze generator for FABS Track 2.
 
-Generates 5+ labeled maps (train/test split) using Recursive Backtracker
-(adapted from TateHouse/ProceduralMazeGenerator). Each map is a dict saved
-as .npy with allow_pickle=True; see env/Maze3DEnv.py for the schema.
+Recursive Backtracker on a grid; saves each maze as a dict in a .npy file
+(see env/Maze3DEnv.py for the schema). Default split is 16 train + 3 test.
 
 Usage:
-    python maze_gen.py                  # default: 4 train + 3 test
-    python maze_gen.py --train 4 --test 3 --size 11 --seed 42
+    python maze_gen.py --train 16 --test 3 --size 9 --seed 42
 """
 from __future__ import annotations
 

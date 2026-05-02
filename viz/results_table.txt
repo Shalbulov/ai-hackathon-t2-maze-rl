@@ -1,0 +1,25 @@
+split  map         mean±std steps    success
+------------------------------------------------------------
+train  train1        62.0 ±   0.0       100%
+train  train10      100.0 ±   0.0       100%
+train  train11       66.0 ±   0.0       100%
+train  train12       79.0 ±   0.0       100%
+train  train13      248.0 ±   0.0       100%
+train  train14      249.0 ±   0.0       100%
+train  train15      170.0 ±   0.0       100%
+train  train16      199.0 ±   0.0       100%
+train  train2        82.0 ±   0.0       100%
+train  train3       112.0 ±   0.0       100%
+train  train4       154.0 ±   0.0       100%
+train  train5        84.0 ±   0.0       100%
+train  train6       178.0 ±   0.0       100%
+train  train7       247.0 ±   0.0       100%
+train  train8       135.0 ±   0.0       100%
+train  train9        60.0 ±   0.0       100%
+test   test1        250.0 ±   0.0         0%
+test   test2        196.0 ±   0.0       100%
+test   test3         82.0 ±   0.0       100%
+------------------------------------------------------------
+Train mean: 139.1
+Test  mean: 176.0
+Gen gap:    +26.6%   (target: <40%)

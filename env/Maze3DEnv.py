@@ -1,27 +1,20 @@
 """
-Maze3DEnv — Custom Gymnasium environment for the Build-with-AI 2026 DeepTech
-Hackathon Track 2 (FABS / GDG April): RL agent navigating a 3D-physics maze.
+Maze3DEnv — Gymnasium environment for the FABS Track 2 maze task.
 
-Spec (per https://fabstoryai.com/gdgapril):
-    Observation: Box(23) — 8 ray-distances + 8 ray-surfaces + 2 goal_dxy
-                 + 3 (friction, slope, temperature) + 2 velocity
-    Action:      Box(2) ∈ [-1, 1]^2 — continuous force [fx, fy]
-    Surfaces:    asphalt 1.0, grass 0.7, sand 0.4, ice 1.2
-    Temperature: cold→energy ×1.5, normal ×1.0, heat→speed ×0.6
-    Slope:       uphills slow, downhills accelerate
+Observation (Box, 27): 8 ray-distances, 8 ray-surfaces, 2 goal-direction,
+3 (friction, slope, temperature), 2 velocity, 4 neighbor visit-counts.
+Action (Box, 2): continuous force in [-1, 1]^2.
 
-Physics is tuned for ~10×10 grids so that an optimal trajectory fits in
-≤60 environment steps (the "Perfect" tier per the spec).
+Surfaces (friction): asphalt 1.0, grass 0.7, sand 0.4, ice 1.2.
+Temperature: cold gives extra energy, heat caps speed.
 
-Map .npy file (allow_pickle=True):
-    {
-        'grid':    np.int8   [H, W]   1=wall, 0=open
-        'surface': np.float32 [H, W]   ∈ {1.0, 0.7, 0.4, 1.2}
-        'slope':   np.float32 [H, W, 2] each ∈ [-1, 1]   (slope_x, slope_y)
-        'temp':    np.float32 [H, W]   ∈ [0, 1]   (0=cold, 0.5=normal, 1=heat)
-        'start':   tuple[int, int]
-        'goal':    tuple[int, int]
-    }
+Map .npy schema:
+    grid:     int8   [H, W]      1=wall, 0=open
+    surface:  float  [H, W]      one of {1.0, 0.7, 0.4, 1.2}
+    slope:    float  [H, W, 2]   each in [-1, 1]
+    temp:     float  [H, W]      in [0, 1]
+    start:    (row, col)
+    goal:     (row, col)
 """
 from __future__ import annotations
 
@@ -35,17 +28,13 @@ from gymnasium import spaces
 
 
 N_RAYS = 8
-N_OBS_BASE = 23   # spec-mandated features (8 dist + 8 surf + 2 goal + 3 phys + 2 vel)
-N_OBS_VISIT = 4   # extension: visit counts of N/E/S/W neighbors (loop avoidance)
+N_OBS_BASE = 23
+N_OBS_VISIT = 4
 N_OBS = N_OBS_BASE + N_OBS_VISIT  # 27
-VISIT_SATURATION = 5.0  # visits >= 5 saturate to 1.0 in obs
-SURFACE_VALUES = np.array([0.4, 0.7, 1.0, 1.2], dtype=np.float32)  # sand, grass, asphalt, ice
+VISIT_SATURATION = 5.0
+SURFACE_VALUES = np.array([0.4, 0.7, 1.0, 1.2], dtype=np.float32)
 
-# Physics constants — tuned so 9×9 mazes (path ~16-19 cells) hit the rubric's
-# "Perfect ≤60 env-steps" tier. Terminal speed for full-throttle on asphalt:
-#   v_term = (action * fric * dt) / (1 - damping) = 0.22 / 0.10 = 2.2 cells/step
-# Per-step displacement at v_term: 2.2 * 0.22 = 0.48 cells/env-step.
-# A 17-cell shortest path with ~70% momentum efficiency ≈ 50 env-steps.
+# Terminal speed v_term = action * fric * DT / (1 - damping) = 2.2 cells/step.
 DT = 0.22
 MAX_VEL = 2.5
 BASE_DAMPING = 0.90
@@ -79,15 +68,12 @@ class Maze3DEnv(gym.Env):
     ):
         """
         Args:
-            map_path: path to .npy file (see module docstring)
-            map_data: alternative to map_path — pass map dict directly (used
-                by procedural training, where mazes are regenerated each reset)
-            max_steps: episode timeout (spec caps scoring at 200; 250 gives buffer)
+            map_path: path to .npy file (see module docstring for schema)
+            map_data: alternative to map_path — map dict in memory
+            max_steps: episode timeout
             render_mode: 'human' | 'rgb_array' | None
-            randomize: if True, randomize start cell + small physics jitter on
-                each reset() — used for domain randomization during training
-                to improve generalization to held-out / OOD maps.
-            seed: RNG seed for randomize=True
+            randomize: random start cell + small physics jitter each reset
+            seed: RNG seed
         """
         super().__init__()
         if map_data is not None:
@@ -121,7 +107,7 @@ class Maze3DEnv(gym.Env):
 
         diag = float(np.hypot(*self.grid.shape))
         self._diag = diag if diag > 0 else 1.0
-        self._physics_scale = 1.0  # mutated by randomize
+        self._physics_scale = 1.0
 
     def _load(self, path: str) -> None:
         self._load_dict(_load_map(path))
@@ -137,19 +123,16 @@ class Maze3DEnv(gym.Env):
         assert self.surface.shape == (h, w)
         assert self.slope.shape == (h, w, 2)
         assert self.temp.shape == (h, w)
-        # BFS distance from goal for potential-based reward shaping. This is
-        # critical: Euclidean distance can decrease even when the agent moves
-        # INTO a wall (because the wall is between agent and goal). With
-        # Euclidean shaping the policy learns to bash walls. BFS distance only
-        # decreases when the agent is actually making progress along a
-        # reachable path.
+        # BFS-distance grid from goal — drives reward shaping. Euclidean
+        # distance shrinks when an agent moves into a wall toward the goal,
+        # so the policy learns to bash walls. BFS only shrinks on real
+        # progress along a reachable path.
         self.bfs_dist = self._bfs_from_goal()
-        # visits buffer must match current grid shape
         if not hasattr(self, "visits") or self.visits.shape != self.grid.shape:
             self.visits = np.zeros_like(self.grid, dtype=np.int32)
 
     def reload(self, map_data: dict) -> None:
-        """Hot-swap to a fresh map (used by procedural training)."""
+        """Hot-swap to a new map without re-instantiation."""
         self._load_dict(map_data)
         diag = float(np.hypot(*self.grid.shape))
         self._diag = diag if diag > 0 else 1.0
@@ -170,13 +153,7 @@ class Maze3DEnv(gym.Env):
         return d
 
     def _random_open_cell(self) -> tuple[int, int]:
-        """Pick a random open cell that is at least 4 cells from the goal.
-
-        Why the distance floor: in a 9×9 maze, an unconstrained random start
-        often lands adjacent to the goal, giving 1-step episodes that don't
-        teach navigation. Forcing min-distance keeps every episode a real
-        navigation task.
-        """
+        """Random open cell with Manhattan distance ≥ 4 from goal."""
         h, w = self.grid.shape
         gr, gc = self.goal
         for _ in range(200):
@@ -198,9 +175,7 @@ class Maze3DEnv(gym.Env):
             self._rng = np.random.default_rng(seed)
 
         if self.randomize:
-            # Curriculum: 50% from canonical start (clean signal), 50% from
-            # randomized start (generalization). Pure randomization drowned the
-            # signal in noise and the policy collapsed to "stand still".
+            # 50% canonical start, 50% random open cell (domain randomization)
             if self._rng.random() < 0.5:
                 self.pos = np.array(self.start, dtype=np.float32) + 0.5
             else:
@@ -230,12 +205,7 @@ class Maze3DEnv(gym.Env):
         return bool(self.grid[r, c])
 
     def _raycast(self) -> tuple[np.ndarray, np.ndarray]:
-        """Cast N_RAYS rays from agent (vectorized). Returns (norm_distances, surface_codes).
-
-        Vectorized over all rays AND all sample distances at once via NumPy
-        broadcasting. ~6× faster than the Python-loop version, which dominated
-        env step time (env step is called every PPO/RecurrentPPO transition).
-        """
+        """Cast N_RAYS rays from the agent (vectorized over rays × samples)."""
         h, w = self.grid.shape
         max_dist = float(np.hypot(h, w))
         n_samples = int(max_dist / 0.2) + 1
@@ -277,9 +247,8 @@ class Maze3DEnv(gym.Env):
         gdx = (self.goal[0] + 0.5 - self.pos[0]) / h
         gdy = (self.goal[1] + 0.5 - self.pos[1]) / w
 
-        # Visit counts of 4 cardinal neighbors, normalized to [0, 1]. Walls
-        # report 1.0 (saturated) so the policy treats them like "stale" cells
-        # — there's no reward signal pulling toward unreachable directions.
+        # Neighbor visit counts (N/E/S/W), saturated to 1.0; walls report 1.0
+        # so the policy treats unreachable directions as "stale".
         def _vc(rr: int, cc: int) -> float:
             if 0 <= rr < h and 0 <= cc < w and self.grid[rr, cc] == 0:
                 return min(self.visits[rr, cc] / VISIT_SATURATION, 1.0)
@@ -289,8 +258,7 @@ class Maze3DEnv(gym.Env):
             dtype=np.float32,
         )
 
-        # Layout: 8 dist + 8 surface + 2 goal_dxy + 3 (fric, slope_avg, temp)
-        #       + 2 vel + 4 neighbor_visits = 27
+        # 8 dist + 8 surface + 2 goal_dxy + 3 (fric, slope, temp) + 2 vel + 4 visits = 27
         obs = np.concatenate(
             [
                 dists,
@@ -325,19 +293,15 @@ class Maze3DEnv(gym.Env):
         slope = self.slope[r, c]
         temp = float(self.temp[r, c])
 
-        # Temperature: cold gives more energy, heat slows down (per spec)
-        if temp < 0.33:       # cold
-            energy = 1.5
-            speed_mul = 1.0
-        elif temp > 0.66:     # heat
-            energy = 1.0
-            speed_mul = 0.6
-        else:                  # normal
-            energy = 1.0
-            speed_mul = 1.0
+        # Temperature regimes per spec: cold → +energy, heat → speed cap
+        if temp < 0.33:
+            energy, speed_mul = 1.5, 1.0   # cold
+        elif temp > 0.66:
+            energy, speed_mul = 1.0, 0.6   # heat
+        else:
+            energy, speed_mul = 1.0, 1.0   # normal
 
-        # Continuous physics — adapted from aweeraman/RL-continuous-control
-        # vel += (action_force * fric * energy + slope_pull) * dt
+        # Continuous physics: vel += (action·fric·energy + slope_pull) · dt
         self.vel += (action * fric * energy + slope * SLOPE_PULL) * DT
         self.vel *= BASE_DAMPING * speed_mul
         self.vel = np.clip(self.vel, -MAX_VEL, MAX_VEL)
@@ -345,7 +309,7 @@ class Maze3DEnv(gym.Env):
         prev_pos = self.pos.copy()
         new_pos = self.pos + self.vel * DT
 
-        # Sliding collision: separate-axis test
+        # Sliding collision: per-axis test so the agent slides along walls
         wall_hit = False
         nr, nc = self._cell(np.array([new_pos[0], self.pos[1]]))
         if self._is_wall(nr, nc):
@@ -364,30 +328,13 @@ class Maze3DEnv(gym.Env):
         self.visits[rr, cc] += 1
         self.trajectory.append((float(self.pos[0]), float(self.pos[1])))
 
-        # Reward shaping (justified in README "Reward Design" section):
-        # 1. small time penalty -> minimize steps
-        # 2. dense progress signal -> avoids sparse-reward credit assignment trap
-        # 3. surface bonus -> learn to prefer high-grip terrain
-        # 4. wall penalty -> discourage scraping walls
-        # 5. terminal goal bonus -> strong signal for the actual objective
+        # Reward = time penalty + BFS-progress + first-visit bonus
+        #        + friction bonus − wall penalty + terminal goal bonus.
         fric_bonus = 1.0 if self.surface[rr, cc] >= 1.0 else 0.0
 
-        # Potential-based reward shaping using BFS distance (in cells).
-        # bfs_progress > 0 ⇔ agent moved to a cell strictly closer to goal
-        # along a reachable path. Euclidean shaping (the previous formula)
-        # rewards moving INTO walls when the wall is between agent and goal,
-        # which collapses learning. See _bfs_from_goal in this file.
         prev_r, prev_c = self._cell(prev_pos)
-        prev_bfs = float(self.bfs_dist[prev_r, prev_c])
-        cur_bfs = float(self.bfs_dist[rr, cc])
-        bfs_progress = prev_bfs - cur_bfs  # +1 for one cell of true progress
+        bfs_progress = float(self.bfs_dist[prev_r, prev_c]) - float(self.bfs_dist[rr, cc])
 
-        # Counts-based exploration bonus — small reward for FIRST visit to a
-        # new cell. Combined with visit-count obs, this drives the policy to
-        # actively seek unexplored regions when BFS-progress is locally flat
-        # (e.g., long detour around a U-shaped corridor). The 2 maps that
-        # still fail are exactly those that need extended exploration before
-        # BFS-distance starts decreasing.
         first_visit_bonus = 0.1 if self.visits[rr, cc] == 1 else 0.0
 
         reward = -0.02 + 1.0 * bfs_progress + 0.02 * fric_bonus + first_visit_bonus
@@ -422,7 +369,6 @@ class Maze3DEnv(gym.Env):
         ax.axis("off")
         if self.render_mode == "rgb_array":
             fig.canvas.draw()
-            # tostring_rgb() removed in matplotlib 3.8+; buffer_rgba is the portable path
             img = np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()
             plt.close(fig)
             return img

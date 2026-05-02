@@ -1,15 +1,14 @@
 """
-benchmark.py — Evaluate the trained agent on train + test maps and produce
-all visualizations required by the FABS Track 2 rubric:
+benchmark.py — Evaluate trained agent and produce all required artifacts.
 
-    viz/learning_curve.png       (from TB events)
-    viz/heatmap_<map>.png        (visit-count 2D histogram)
-    viz/trajectory_3d.gif        (3D pos over time)
-    viz/before_after.gif         (untrained vs trained on test1)
-    viz/results_table.txt        (mean ± std steps, per-map)
+Outputs:
+    viz/results_table.txt        per-map mean±std steps + success rate
+    viz/heatmap_<map>.png        visit-count heatmap per map
+    viz/trajectory_3d.gif        rotating 3D trajectory plot
+    viz/before_after.gif         random vs trained policy side-by-side
+    viz/learning_curve.png       reward / episode-length over training
 
 Usage:
-    python benchmark.py                        # uses agents/agent.zip
     python benchmark.py --model agents/best_model.zip --episodes 100
 """
 from __future__ import annotations
@@ -33,8 +32,7 @@ from env import Maze3DEnv
 
 
 def load_model(path: str):
-    """Try PPO first, fall back to RecurrentPPO. SB3 stores model class metadata
-    in the zip but PPO.load() won't auto-route to the LSTM variant, so we sniff."""
+    """Load PPO; fall back to RecurrentPPO if the zip was saved by it."""
     if path.endswith(".zip"):
         try:
             return PPO.load(path)

@@ -1,22 +1,14 @@
 """
-ablation.py — Component ablation study for FABS Track 2 rubric (8 pts).
+ablation.py — Component ablation study.
 
-Runs 3 short training runs with key components disabled, then compares
-mean steps on test maps. This justifies which obs/reward components are
-load-bearing.
-
-Variants:
-    full          — everything on (baseline)
-    no_surface    — surface ray codes zeroed in obs
-    no_progress   — only sparse reward (-0.05 per step + terminal goal)
-    no_dr         — no domain randomization at training
-
-Total runtime ~ 4 × (steps / 4) ≈ steps, so use a small step budget here
-(e.g. 100k each) for the ablation table — the *main* agent stays in
-agents/agent.zip from train.py.
+Trains 4 short variants and benchmarks each on train + test maps:
+    full          baseline
+    no_surface    surface ray codes zeroed in obs
+    no_progress   only sparse reward (-0.05 per step + terminal goal)
+    no_dr         no domain randomization
 
 Usage:
-    python ablation.py --steps 100000
+    python ablation.py --steps 100000 --episodes 20
 """
 from __future__ import annotations
 
