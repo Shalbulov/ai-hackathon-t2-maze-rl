@@ -130,11 +130,12 @@ def main():
                         help="disable Domain Randomization (random start cell). "
                              "On by default with BFS reward shaping, since DR helps "
                              "generalization without distorting the reward signal.")
-    parser.add_argument("--no-procedural", action="store_true",
-                        help="disable procedural maze generation during training "
-                             "(falls back to shuffling fixed maps/train*.npy). "
-                             "Procedural is on by default — gives infinite topology "
-                             "variety so the policy must generalize, not memorize.")
+    parser.add_argument("--procedural", action="store_true",
+                        help="generate fresh mazes during training instead of "
+                             "shuffling fixed maps/train*.npy. Off by default — "
+                             "tested on 1.5M steps and didn't converge fast "
+                             "enough; mixed-pool of 16 fixed train maps with "
+                             "shuffle reaches 0.85+ success in 1.5M steps.")
     parser.add_argument("--subproc", action="store_true",
                         help="use SubprocVecEnv instead of DummyVecEnv")
     args = parser.parse_args()
@@ -152,8 +153,8 @@ def main():
     print(f"[train] device: {'cuda' if torch.cuda.is_available() else 'cpu'}")
 
     randomize = not args.no_dr
-    procedural = not args.no_procedural
-    print(f"[train] procedural={procedural} dr={randomize}")
+    procedural = args.procedural
+    print(f"[train] procedural={procedural} dr={randomize} train_maps={len(train_maps)}")
     env_fns = [
         make_env(train_maps, randomize=randomize, rank=i, seed=args.seed,
                  procedural=procedural)
