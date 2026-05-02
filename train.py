@@ -17,6 +17,7 @@ import glob
 import os
 from pathlib import Path
 
+import gymnasium as gym
 import numpy as np
 import torch
 from stable_baselines3 import PPO
@@ -27,27 +28,67 @@ from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from env import Maze3DEnv
 
 
-def make_env(map_path: str, randomize: bool, rank: int, seed: int = 0):
+class MapShuffleEnv(gym.Env):
+    """Picks a random map from `map_paths` on every reset.
+
+    Why: with one map pinned per parallel env, PPO memorizes per-topology
+    policies but never learns a general navigation strategy. Shuffling
+    across all train maps each episode forces it to learn a single policy
+    that works on every layout — which is exactly what generalizes to test
+    and OOD maps.
+    """
+
+    metadata = Maze3DEnv.metadata
+
+    def __init__(self, map_paths: list[str], randomize: bool, seed: int = 0):
+        super().__init__()
+        if not map_paths:
+            raise ValueError("map_paths must be non-empty")
+        self._envs = {p: Maze3DEnv(p, randomize=randomize, seed=seed) for p in map_paths}
+        self._paths = list(map_paths)
+        self._rng = np.random.default_rng(seed)
+        self.current = self._envs[self._paths[0]]
+        self.action_space = self.current.action_space
+        self.observation_space = self.current.observation_space
+
+    def reset(self, *, seed=None, options=None):
+        if seed is not None:
+            self._rng = np.random.default_rng(seed)
+        path = self._paths[int(self._rng.integers(len(self._paths)))]
+        self.current = self._envs[path]
+        return self.current.reset(seed=int(self._rng.integers(1 << 30)), options=options)
+
+    def step(self, action):
+        return self.current.step(action)
+
+    def render(self):
+        return self.current.render()
+
+    def close(self):
+        for e in self._envs.values():
+            e.close()
+
+
+def make_env(map_paths: list[str], randomize: bool, rank: int, seed: int = 0):
     def _init():
-        env = Maze3DEnv(map_path=map_path, randomize=randomize, seed=seed + rank)
+        env = MapShuffleEnv(map_paths=map_paths, randomize=randomize, seed=seed + rank)
         env = Monitor(env)
         return env
-
     return _init
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--steps", type=int, default=1_500_000)
+    parser.add_argument("--steps", type=int, default=2_000_000)
     parser.add_argument("--n-envs", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--maps-dir", type=str, default="maps")
     parser.add_argument("--out-dir", type=str, default="agents")
     parser.add_argument("--tb", type=str, default="tb")
-    parser.add_argument("--dr", action="store_true",
-                        help="enable Domain Randomization (random start + physics jitter); "
-                             "default off — egocentric ray obs already gives map-to-map "
-                             "generalization, and DR diluted the canonical-start signal")
+    parser.add_argument("--no-dr", action="store_true",
+                        help="disable Domain Randomization (random start cell). "
+                             "On by default with BFS reward shaping, since DR helps "
+                             "generalization without distorting the reward signal.")
     parser.add_argument("--subproc", action="store_true",
                         help="use SubprocVecEnv instead of DummyVecEnv")
     args = parser.parse_args()
@@ -64,16 +105,21 @@ def main():
     print(f"[train] {len(train_maps)} train maps, {len(test_maps)} test maps")
     print(f"[train] device: {'cuda' if torch.cuda.is_available() else 'cpu'}")
 
-    # Round-robin train maps across parallel envs
+    # All envs draw from the full train pool on every reset (MapShuffleEnv)
+    randomize = not args.no_dr
     env_fns = [
-        make_env(train_maps[i % len(train_maps)], randomize=args.dr, rank=i, seed=args.seed)
+        make_env(train_maps, randomize=randomize, rank=i, seed=args.seed)
         for i in range(args.n_envs)
     ]
     VecCls = SubprocVecEnv if args.subproc else DummyVecEnv
     vec_env = VecCls(env_fns)
 
-    # Eval on a single train map without DR — used by EvalCallback for early-stop tracking
-    eval_env = DummyVecEnv([make_env(train_maps[0], randomize=False, rank=999, seed=args.seed)])
+    # Eval: single train map, no DR — for EvalCallback's "best_model" tracking
+    def _eval_init():
+        env = Maze3DEnv(train_maps[0], randomize=False, seed=args.seed + 999)
+        env = Monitor(env)
+        return env
+    eval_env = DummyVecEnv([_eval_init])
 
     # PPO hyperparams chosen for short-horizon continuous control on small obs.
     # n_steps=1024 × 4 envs = 4096 transitions per rollout — good for PPO stability.
