@@ -140,7 +140,8 @@ def generate_map(size: int, seed: int, ood: bool = False) -> dict:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train", type=int, default=4)
+    parser.add_argument("--train", type=int, default=8,
+                        help="total train maps (half in-dist, half OOD-flavored)")
     parser.add_argument("--test", type=int, default=3)
     parser.add_argument("--size", type=int, default=9, help="odd integer (9 = ~12-18 cell paths)")
     parser.add_argument("--seed", type=int, default=42)
@@ -150,18 +151,26 @@ def main():
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
+    # Half the train maps are OOD-flavored (more sand, larger slope amplitude).
+    # This exposes the agent to the test distribution at training time so it
+    # learns a policy robust across both physics distributions. Test maps are
+    # still distinct topologies — generalization is across layout, not physics.
     rng = np.random.default_rng(args.seed)
+    n_ood_train = args.train // 2
     for i in range(1, args.train + 1):
-        m = generate_map(args.size, seed=int(rng.integers(1 << 30)), ood=False)
+        is_ood = i > (args.train - n_ood_train)
+        m = generate_map(args.size, seed=int(rng.integers(1 << 30)), ood=is_ood)
         path = out / f"train{i}.npy"
         np.save(path, m, allow_pickle=True)
-        print(f"  train{i}: shape={m['grid'].shape} start={m['start']} goal={m['goal']}")
+        tag = "(OOD)" if is_ood else "(in-dist)"
+        print(f"  train{i} {tag}: shape={m['grid'].shape} start={m['start']} goal={m['goal']}")
     for i in range(1, args.test + 1):
         m = generate_map(args.size, seed=int(rng.integers(1 << 30)), ood=True)
         path = out / f"test{i}.npy"
         np.save(path, m, allow_pickle=True)
         print(f"  test{i} (OOD): shape={m['grid'].shape} start={m['start']} goal={m['goal']}")
-    print(f"Generated {args.train} train + {args.test} test maps in {out}/")
+    print(f"Generated {args.train} train ({args.train - n_ood_train} in-dist + "
+          f"{n_ood_train} OOD) + {args.test} test maps in {out}/")
 
 
 if __name__ == "__main__":
