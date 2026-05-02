@@ -1,7 +1,8 @@
-# FABS · Track 2 — RL Agent for 3D-Physics Maze Navigation
+# Track 2 — RL Agent for 3D-Physics Maze Navigation
 
-**Build with AI 2026 DeepTech Hackathon · GDG April · FABS**
+**Build with AI 2026 DeepTech Hackathon** · organized by **FABS** together with **GDG April**
 Repo: https://github.com/Shalbulov/ai-hackathon-t2-maze-rl
+Author: Arsen Shalbulov
 
 PPO continuous-control agent that navigates 9×9 procedurally generated mazes
 with heterogeneous physics — friction (asphalt / grass / sand / ice), slope,
@@ -206,9 +207,10 @@ For Colab free-tier T4: open `colab_train.ipynb` and run cells top-to-bottom (~1
 
 ---
 
-## About FABS
+## About the hackathon
 
-[FABS](https://fabstoryai.com) is an edtech platform for specialists working on
-facial / body function and aesthetics — logopedists, myofunctional therapists,
-cosmetologists, etc. This Track 2 submission is a technical demo of our
-team's RL/optimization capability, separate from the clinical product.
+This is my submission to **Track 2** of the **Build with AI 2026 DeepTech
+Hackathon**, organized by [FABS](https://fabstoryai.com) (an edtech platform
+for facial / body function and aesthetics specialists) together with
+**GDG April**. I am not affiliated with FABS — they are the hackathon
+organizer; this repository is my individual entry to their RL track.

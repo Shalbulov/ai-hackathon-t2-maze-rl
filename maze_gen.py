@@ -1,5 +1,5 @@
 """
-maze_gen.py — Procedural maze generator for FABS Track 2.
+maze_gen.py — Procedural maze generator for the Track 2 hackathon submission.
 
 Recursive Backtracker on a grid; saves each maze as a dict in a .npy file
 (see env/Maze3DEnv.py for the schema). Default split is 16 train + 3 test.

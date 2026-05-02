@@ -1,5 +1,5 @@
 """
-Maze3DEnv — Gymnasium environment for the FABS Track 2 maze task.
+Maze3DEnv — Gymnasium environment for the Track 2 hackathon maze task.
 
 Observation (Box, 27): 8 ray-distances, 8 ray-surfaces, 2 goal-direction,
 3 (friction, slope, temperature), 2 velocity, 4 neighbor visit-counts.

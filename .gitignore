@@ -9,3 +9,4 @@ tb/
 *.monitor.csv
 agents/ppo_ckpt_*
 .DS_Store
+docs/

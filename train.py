@@ -1,5 +1,5 @@
 """
-train.py — PPO training for FABS Track 2.
+train.py — PPO training for the Track 2 hackathon submission.
 
 Trains on maps/train*.npy only. Test maps are held out for benchmarking.
 Each parallel env shuffles the full train pool every reset, with random
