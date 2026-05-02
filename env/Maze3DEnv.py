@@ -381,7 +381,16 @@ class Maze3DEnv(gym.Env):
         prev_bfs = float(self.bfs_dist[prev_r, prev_c])
         cur_bfs = float(self.bfs_dist[rr, cc])
         bfs_progress = prev_bfs - cur_bfs  # +1 for one cell of true progress
-        reward = -0.02 + 1.0 * bfs_progress + 0.02 * fric_bonus
+
+        # Counts-based exploration bonus — small reward for FIRST visit to a
+        # new cell. Combined with visit-count obs, this drives the policy to
+        # actively seek unexplored regions when BFS-progress is locally flat
+        # (e.g., long detour around a U-shaped corridor). The 2 maps that
+        # still fail are exactly those that need extended exploration before
+        # BFS-distance starts decreasing.
+        first_visit_bonus = 0.1 if self.visits[rr, cc] == 1 else 0.0
+
+        reward = -0.02 + 1.0 * bfs_progress + 0.02 * fric_bonus + first_visit_bonus
         if wall_hit:
             reward -= 0.2
 
