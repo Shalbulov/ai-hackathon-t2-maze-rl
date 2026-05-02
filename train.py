@@ -111,14 +111,17 @@ class MapShuffleEnv(gym.Env):
 
 
 def make_env(map_paths: list[str], randomize: bool, rank: int, seed: int = 0,
-             procedural: bool = False, size: int = 9):
+             procedural: bool = False, size: int = 9, monitor_dir: str = "agents"):
     def _init():
         if procedural:
             env = ProceduralMazeEnv(size=size, ood_prob=0.5, randomize=randomize,
                                     seed=seed + rank)
         else:
             env = MapShuffleEnv(map_paths=map_paths, randomize=randomize, seed=seed + rank)
-        env = Monitor(env)
+        # Monitor needs an explicit filename to write episode_reward / length
+        # CSVs that benchmark.py later reads to plot the learning curve.
+        os.makedirs(monitor_dir, exist_ok=True)
+        env = Monitor(env, filename=os.path.join(monitor_dir, f"monitor_rank{rank}"))
         return env
     return _init
 
@@ -166,7 +169,7 @@ def main():
         raise RuntimeError("--lstm requires sb3-contrib. Run `pip install sb3-contrib==2.3.0`.")
     env_fns = [
         make_env(train_maps, randomize=randomize, rank=i, seed=args.seed,
-                 procedural=procedural)
+                 procedural=procedural, monitor_dir=args.out_dir)
         for i in range(args.n_envs)
     ]
     VecCls = SubprocVecEnv if args.subproc else DummyVecEnv
